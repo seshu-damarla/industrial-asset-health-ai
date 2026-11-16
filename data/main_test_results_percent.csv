@@ -1,0 +1,4 @@
+Method,Dataset,N,Accuracy,Correct,Wrong,Invalid_Rate,Psingle_correct,Psingle_wrong,Pinvalid,Pmulti_correct,Pmulti_wrong,Sec_per_Sample
+Few-shot Qwen2.5-7B,Main_Test,534,54.49,291,243,0.0,54.49,45.51,0.0,0.0,0.0,0.3983
+QLoRA Qwen2.5-7B,Main_Test,534,88.01,470,64,0.0,88.01,11.99,0.0,0.0,0.0,0.2549
+Zero-shot Qwen2.5-7B,Main_Test,534,55.43,296,238,0.19,55.43,44.38,0.19,0.0,0.0,0.1931

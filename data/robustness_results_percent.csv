@@ -1,0 +1,4 @@
+Method,N_Original,N_SimplePert,N_ComplexPert,Acc@Original,Acc@SimplePert,Drop@SimplePert,PDR@SimplePert,Acc@Consist_Simple,Acc@ComplexPert,Drop@ComplexPert,PDR@ComplexPert,Acc@Consist_Complex
+Few-shot Qwen2.5-7B,534,534,534,54.49,19.48,35.02,-64.26,15.17,18.73,35.77,-65.64,14.42
+QLoRA Qwen2.5-7B,534,534,534,88.01,43.07,44.94,-51.06,42.13,40.82,47.19,-53.62,39.51
+Zero-shot Qwen2.5-7B,534,534,534,55.43,15.17,40.26,-72.64,11.99,14.61,40.82,-73.65,12.36
