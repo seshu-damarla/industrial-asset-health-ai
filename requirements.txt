@@ -1,0 +1,8 @@
+torch==2.8.0
+gradio>=5.0,<7
+spaces
+transformers>=4.51,<5
+peft>=0.15,<1
+accelerate>=1.0,<2
+safetensors
+# Add bitsandbytes only if MODEL_DTYPE=nf4 is selected, after confirming ZeroGPU compatibility.
