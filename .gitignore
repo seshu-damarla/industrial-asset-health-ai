@@ -1,0 +1,58 @@
+# Python environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.streamlit/secrets.toml
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Model weights and checkpoints (host adapters in Hugging Face model repo)
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+models/
+
+# Local ML caches, logs and reports
+.cache/
+hf_cache/
+wandb/
+mlruns/
+logs/
+*.log
+
+# Downloaded archives and temporary files
+*.zip
+*.tar.gz
+*.tmp
+
+# Local exports (do not exclude curated example and benchmark data)
+outputs/
+exports/
+predictions_*.csv
