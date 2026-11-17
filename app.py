@@ -295,6 +295,81 @@ with gr.Blocks(title='Industrial Asset Health AI') as demo:
                     'Both approaches can now be compared live in the Ask tab.\n\n'
                     '**Robustness caution:** QLoRA accuracy was 43.07% on the simple perturbed set '
                     'and 40.82% on the complex perturbed set.')
+    
+    with gr.Tab("About This Project"):
+        gr.Markdown("""
+## Industrial Asset Health AI
+
+### Project Overview
+
+Industrial Asset Health AI is a research-based web application
+for answering multiple-choice diagnostic questions related to
+industrial equipment failures and sensor measurements.
+
+The application compares two approaches:
+
+**1. Fine-tuned Large Language Model (QLoRA)**
+
+- Base model: Qwen2.5-7B-Instruct
+- Fine-tuning: Quantized Low-Rank Adaptation (QLoRA)
+- Task: Select the most relevant answer for an industrial
+  failure-sensor diagnostic question
+
+**2. Hybrid Retrieval**
+
+- Combines TF-IDF and semantic similarity (MiniLM)
+- Evaluates each candidate answer independently
+- Uses supporting and contradicting examples from training data
+- Selects the answer with the highest retrieval score
+
+### Research Performance
+
+Evaluated on 534 held-out questions from FailureSensorIQ.
+
+| Method | Test Accuracy |
+|---|---:|
+| Fine-tuned Qwen2.5-7B (QLoRA) | 88.01% |
+| Hybrid Retrieval | 73.41% |
+
+These are the original research benchmark results,
+not live measurements from the deployed application.
+
+### Application Features
+
+- Enter diagnostic questions with 2–5 answer choices
+- Load held-out examples from FailureSensorIQ
+- Compare QLoRA and hybrid retrieval predictions
+- View predicted answers and inference times
+- Download comparison results as CSV
+
+### Technologies
+
+Python, PyTorch, Hugging Face Transformers, PEFT,
+QLoRA, Sentence Transformers, Scikit-learn,
+Gradio, and Hugging Face ZeroGPU.
+
+### Limitations
+
+- This is a research prototype, not a validated industrial
+  fault-diagnosis or safety system.
+- Performance can decrease when questions are paraphrased,
+  answer options are shuffled, or new distractors are introduced.
+- The model provides an answer choice, not a verified
+  causal explanation.
+- The deployed LLM uses FP16 inference, while the original
+  research benchmark used 4-bit NF4 inference.
+- GPU inference is subject to ZeroGPU queues and usage limits.
+
+**Important:** Predictions should be verified by qualified
+engineers before being used for operational decisions.
+
+### Live Application
+
+[Industrial Asset Health AI on Hugging Face](
+https://huggingface.co/spaces/dseshukumar/industrial-asset-health-ai
+)
+        """)
+
     gr.Markdown(f'Inference precision: `{DTYPE}`. '
                 'The original benchmark used 4-bit NF4. Float16 inference may produce different predictions.')
 
