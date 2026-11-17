@@ -53,12 +53,14 @@ if DTYPE == 'nf4':
     )
     model = PeftModel.from_pretrained(base, ADAPTER)
 else:
-    # Plain FP16: assemble model and adapter on CPU, then hand off to
+    # Plain FP16: explicitly load adapter on CPU because PEFT can infer
+    # a fake CUDA device under ZeroGPU before a physical GPU is allocated.
+    # Assemble model and adapter on CPU, then hand off to
     # ZeroGPU's CUDA-emulating model packer via explicit .to('cuda').
     base = AutoModelForCausalLM.from_pretrained(
         BASE, torch_dtype=torch.float16, low_cpu_mem_usage=True,
     )
-    model = PeftModel.from_pretrained(base, ADAPTER)
+    model = PeftModel.from_pretrained(base, ADAPTER, torch_device='cpu')
     model = model.to('cuda')
 model.eval()
 
