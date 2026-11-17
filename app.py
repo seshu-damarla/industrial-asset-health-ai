@@ -124,11 +124,13 @@ def predict(asset, question, n_choices, a, b, c, d, e, expected):
 
 
 def select_example(idx):
+    if idx is None or str(idx).strip() == '':
+        raise gr.Error('Please select a held-out example first.')
     row = examples[int(idx)]
     opts = row['options']
     label = next((row['option_ids'][i] for i, val in enumerate(row['correct']) if val), '')
     return (row['asset_name'].replace('_', ' ').capitalize(), row['question'], str(len(opts)),
-            *[opts[i] if i < len(opts) else '' for i in range(5)], label)
+            *[opts[i] if i < len(opts) else '' for i in range(5)], label, gr.Tabs(selected='ask'))
 
 
 def export_csv(log):
@@ -148,7 +150,8 @@ with gr.Blocks(title='Industrial Asset Health AI') as demo:
     gr.Markdown('# Industrial Asset Health AI\n'
                 '### Failure–sensor multiple-choice reasoning with a fine-tuned Qwen2.5-7B model\n'
                 'Research prototype. Not a validated industrial maintenance or safety system.')
-    with gr.Tab('Ask a diagnostic question'):
+    with gr.Tabs(selected='ask') as main_tabs:
+      with gr.Tab('Ask a diagnostic question', id='ask'):
         asset = gr.Dropdown(choices=ASSETS, value='Electric motor', label='Asset')
         question = gr.Textbox(lines=3, label='Diagnostic question')
         n_choices = gr.Dropdown(choices=['2', '3', '4', '5'], value='5', label='Number of choices')
@@ -168,15 +171,15 @@ with gr.Blocks(title='Industrial Asset Health AI') as demo:
         export.click(fn=export_csv, inputs=record, outputs=outfile)
         clear.click(fn=lambda: ('', *(['']*5), '', '', '', ''),
                     inputs=None, outputs=[question,*inputs,result,correctness,raw,record])
-    with gr.Tab('Try a held-out example'):
+      with gr.Tab('Try a held-out example', id='examples'):
         gr.Markdown('Select a sample question to populate the Ask tab. Ground truth is shown only for the original example.')
         example_index = gr.Dropdown(
             choices=[(f"#{i + 1} — {r['asset_name']} — {r['question'][:72]}", str(i)) for i,r in enumerate(examples)],
             value='0', label='Sample example')
         load = gr.Button('Load example into question form')
         load.click(fn=select_example, inputs=example_index,
-                   outputs=[asset,question,n_choices,*inputs,expected])
-    with gr.Tab('Research benchmark'):
+                   outputs=[asset,question,n_choices,*inputs,expected,main_tabs])
+      with gr.Tab('Research benchmark', id='benchmark'):
         gr.Markdown('### Published results on the original held-out test set (534 questions)')
         gr.Markdown('| Approach | Test accuracy |\n|---|---:|\n'
                     '| QLoRA fine-tuned Qwen2.5-7B | **88.01%** |\n'
