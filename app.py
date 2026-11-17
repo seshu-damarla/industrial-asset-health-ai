@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import spaces  # import before torch/CUDA initialization
@@ -16,6 +17,7 @@ import gradio as gr
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import PeftModel
+from retrieval_runtime import get_index
 
 ROOT = Path(__file__).resolve().parent
 BASE = 'Qwen/Qwen2.5-7B-Instruct'
@@ -115,12 +117,77 @@ def predict(asset, question, n_choices, a, b, c, d, e, expected):
     else:
         result = f'{label}. {choices[LABELS.index(label)]}'
         correctness = (('Correct' if label == expected else 'Incorrect')
-                       if expected in LABELS[:n] else 'No ground truth supplied')
+                       if expected and expected in LABELS[:n] else 'No ground truth supplied')
     record = {'asset': asset, 'question': question, 'options': choices,
               'predicted_label': label, 'predicted_answer': choices[LABELS.index(label)] if label else None,
               'ground_truth': expected or None, 'comparison': correctness,
               'raw_model_output': raw, 'inference_mode': DTYPE}
     return result, correctness, raw, json.dumps(record, ensure_ascii=False)
+
+
+# Run CPU retrieval first, then allocate ZeroGPU for QLoRA.
+def compare_retrieval(asset, question, n_choices, a, b, c, d, e, expected, task):
+    n=int(n_choices)
+    choices=[str(x or '').strip() for x in [a,b,c,d,e][:n]]
+    question=(question or '').strip()
+    if not question or any(not choice for choice in choices):
+        raise gr.Error('Enter the question and all answer choices before comparing.')
+    start=time.perf_counter()
+    try:
+        retrieval=get_index().predict({
+            'asset_name':str(asset).strip().lower(),'question':question,
+            'options':choices,'relevancy':task,
+            'question_type':'mcp1_negative' if task.startswith('irrelevant_') else 'mcp1_positive',
+        })
+    except Exception as exc:
+        raise gr.Error(f'Retrieval initialization or prediction failed: {exc}') from exc
+    elapsed=time.perf_counter()-start
+    label=retrieval['label']
+    status=('Correct' if label==expected else 'Incorrect') if expected and expected in 'ABCDE'[:n] else 'No ground truth'
+    record={'asset':asset,'question':question,'options':choices,'task':task,
+            'ground_truth':expected if expected and expected in 'ABCDE'[:n] else None,
+            'hybrid_label':label,'hybrid_answer':retrieval['answer'],
+            'hybrid_correctness':status,'hybrid_elapsed_seconds':round(elapsed,3),
+            'hybrid_option_scores':retrieval['details'],'hybrid_score_margin':retrieval['margin']}
+    return (f"{label}. {retrieval['answer']}",status,f'{elapsed:.2f} s',
+            [[i['option'],i['score'],i['support'],i['contradiction']] for i in retrieval['details']],
+            json.dumps(record,ensure_ascii=False))
+
+
+@spaces.GPU(duration=60)
+def compare_qlora(asset, question, n_choices, a, b, c, d, e, expected, record_json):
+    n=int(n_choices)
+    choices=[str(x or '').strip() for x in [a,b,c,d,e][:n]]
+    question=(question or '').strip()
+    start=time.perf_counter()
+    prompt=format_question(question,choices)
+    batch=tokenizer(prompt,return_tensors='pt',truncation=True,max_length=768).to('cuda')
+    with torch.inference_mode():
+        output=model.generate(**batch,max_new_tokens=8,do_sample=False,
+                              pad_token_id=tokenizer.eos_token_id)
+    elapsed=time.perf_counter()-start
+    raw=tokenizer.decode(output[0,batch['input_ids'].shape[1]:],skip_special_tokens=True).strip()
+    label=parse_label(raw,choices)
+    record=json.loads(record_json)
+    status=(('Correct' if label==expected else 'Incorrect') if expected and expected in 'ABCDE'[:n] and label else 'No ground truth / invalid')
+    record.update({'qlora_label':label,'qlora_answer':choices['ABCDE'.index(label)] if label else None,
+                   'qlora_raw_output':raw,'qlora_elapsed_seconds':round(elapsed,3),
+                   'qlora_correctness':status,'inference_precision':DTYPE})
+    agree='Agree' if label is not None and label==record['hybrid_label'] else 'Disagree' if label is not None else 'Invalid LLM output'
+    record['method_agreement']=agree
+    result=f"{label}. {record['qlora_answer']}" if label else f'Invalid model output: {raw!r}'
+    return result,status,f'{elapsed:.2f} s',agree,json.dumps(record,ensure_ascii=False)
+
+
+def export_comparison(record_json):
+    if not record_json: return None
+    import tempfile
+    rec=json.loads(record_json)
+    with tempfile.NamedTemporaryFile(mode='w',suffix='.csv',prefix='asset_ai_comparison_',
+                                     delete=False,newline='',encoding='utf-8') as f:
+        data={k:(json.dumps(v,ensure_ascii=False) if isinstance(v,(dict,list)) else v) for k,v in rec.items()}
+        writer=csv.DictWriter(f,fieldnames=list(data));writer.writeheader();writer.writerow(data)
+        return f.name
 
 
 def select_example(idx):
@@ -130,7 +197,7 @@ def select_example(idx):
     opts = row['options']
     label = next((row['option_ids'][i] for i, val in enumerate(row['correct']) if val), '')
     return (row['asset_name'].replace('_', ' ').capitalize(), row['question'], str(len(opts)),
-            *[opts[i] if i < len(opts) else '' for i in range(5)], label, gr.Tabs(selected='ask'))
+            *[opts[i] if i < len(opts) else '' for i in range(5)], label, row['relevancy'], gr.Tabs(selected='ask'))
 
 
 def export_csv(log):
@@ -155,6 +222,13 @@ with gr.Blocks(title='Industrial Asset Health AI') as demo:
         asset = gr.Dropdown(choices=ASSETS, value='Electric motor', label='Asset')
         question = gr.Textbox(lines=3, label='Diagnostic question')
         n_choices = gr.Dropdown(choices=['2', '3', '4', '5'], value='5', label='Number of choices')
+        task = gr.Dropdown(
+            choices=[('Sensor relevant to failure','relevant_sensors_for_failure_mode'),
+                     ('Failure mode relevant to sensor','relevant_failure_modes_for_sensor'),
+                     ('Sensor irrelevant to failure','irrelevant_sensors_for_failure_mode'),
+                     ('Failure mode irrelevant to sensor','irrelevant_failure_modes_for_sensor')],
+            value='relevant_sensors_for_failure_mode',label='Question type for hybrid retrieval',
+            info='Held-out examples set this automatically. For manual questions choose the appropriate task.')
         inputs = [gr.Textbox(label=f'Option {x}') for x in LABELS]
         expected = gr.Textbox(label='Ground truth label (optional)', visible=False)
         with gr.Row():
@@ -166,6 +240,37 @@ with gr.Blocks(title='Industrial Asset Health AI') as demo:
         record = gr.State('')
         export = gr.Button('Export prediction as CSV')
         outfile = gr.File(label='CSV download')
+        gr.Markdown('### Compare both research methods\nThe hybrid model runs on CPU first; QLoRA then runs on ZeroGPU. The first retrieval request builds a CPU index and may take longer.')
+        compare = gr.Button('Compare QLoRA and hybrid retrieval', variant='primary')
+        with gr.Row():
+            with gr.Column():
+                gr.Markdown('#### Hybrid retrieval (CPU)')
+                hybrid_answer=gr.Textbox(label='Predicted answer',interactive=False)
+                hybrid_correct=gr.Textbox(label='Ground-truth comparison',interactive=False)
+                hybrid_time=gr.Textbox(label='Elapsed time',interactive=False)
+            with gr.Column():
+                gr.Markdown('#### Fine-tuned QLoRA (ZeroGPU)')
+                qlora_answer=gr.Textbox(label='Predicted answer',interactive=False)
+                qlora_correct=gr.Textbox(label='Ground-truth comparison',interactive=False)
+                qlora_time=gr.Textbox(label='Elapsed time',interactive=False)
+        agreement=gr.Textbox(label='Method agreement',interactive=False)
+        gr.Markdown('Hybrid retrieval per-option scores (not probabilities)')
+        option_scores=gr.Dataframe(headers=['Option','Final score','Support','Contradiction'],
+                                   datatype=['str','number','number','number'],interactive=False)
+        comparison_log=gr.State('')
+        comparison_export=gr.Button('Download comparison CSV')
+        comparison_download=gr.File(label='Comparison CSV')
+        comparison_event=compare.click(
+            fn=compare_retrieval,
+            inputs=[asset,question,n_choices,*inputs,expected,task],
+            outputs=[hybrid_answer,hybrid_correct,hybrid_time,option_scores,comparison_log],
+        )
+        comparison_event.success(
+            fn=compare_qlora,
+            inputs=[asset,question,n_choices,*inputs,expected,comparison_log],
+            outputs=[qlora_answer,qlora_correct,qlora_time,agreement,comparison_log],
+        )
+        comparison_export.click(fn=export_comparison,inputs=comparison_log,outputs=comparison_download)
         run.click(fn=predict, inputs=[asset,question,n_choices,*inputs,expected],
                   outputs=[result,correctness,raw,record])
         export.click(fn=export_csv, inputs=record, outputs=outfile)
@@ -178,7 +283,7 @@ with gr.Blocks(title='Industrial Asset Health AI') as demo:
             value='0', label='Sample example')
         load = gr.Button('Load example into question form')
         load.click(fn=select_example, inputs=example_index,
-                   outputs=[asset,question,n_choices,*inputs,expected,main_tabs])
+                   outputs=[asset,question,n_choices,*inputs,expected,task,main_tabs])
       with gr.Tab('Research benchmark', id='benchmark'):
         gr.Markdown('### Published results on the original held-out test set (534 questions)')
         gr.Markdown('| Approach | Test accuracy |\n|---|---:|\n'
@@ -187,8 +292,7 @@ with gr.Blocks(title='Industrial Asset Health AI') as demo:
                     '| Zero-shot Qwen2.5-7B | 55.43% |\n'
                     '| Few-shot Qwen2.5-7B | 54.49% |\n\n'
                     'These are historical benchmark measurements, **not** live runtime performance. '
-                    'This initial ZeroGPU app runs only the fine-tuned LLM; the original hybrid retrieval '
-                    'implementation remains available in your local Streamlit application.\n\n'
+                    'Both approaches can now be compared live in the Ask tab.\n\n'
                     '**Robustness caution:** QLoRA accuracy was 43.07% on the simple perturbed set '
                     'and 40.82% on the complex perturbed set.')
     gr.Markdown(f'Inference precision: `{DTYPE}`. '
